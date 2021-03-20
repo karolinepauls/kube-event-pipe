@@ -90,7 +90,7 @@ def run_kube_event_pipe(
             env=subprocess_env
         )
 
-        sleep(0.5)  # Let it read all events so far.
+        sleep(5)  # Let it read all events so far.
 
         try:
             with output_file.open('r') as output_readable:

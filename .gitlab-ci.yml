@@ -1,0 +1,66 @@
+stages:
+  - test
+
+services:
+  - name: docker:20-dind
+    # The cluster certificate only allows a handful of hostnames, this is one of them:
+    alias: kubernetes
+
+variables:
+  DOCKER_HOST: tcp://docker:2375/
+
+.test-template: &test-template
+  stage: test
+  script:
+    # Create a Kubernetes cluster with KinD.
+    - 'wget -qO get-docker.sh https://get.docker.com &'
+    - 'wget -qO kubectl https://dl.k8s.io/release/v1.20.0/bin/linux/amd64/kubectl &'
+    - 'wget -qO kind https://github.com/kubernetes-sigs/kind/releases/download/v0.10.0/kind-linux-amd64 &'
+    - wait
+    - sh get-docker.sh
+    - chmod +x kubectl
+    - chmod +x kind
+    # The cluster is going to run in the DinD container - so make it bind to 0.0.0.0, cause we'll
+    # be accessing it from the test container.
+    - |
+      echo '
+      kind: Cluster
+      apiVersion: kind.x-k8s.io/v1alpha4
+      networking:
+        apiServerAddress: "0.0.0.0"
+      ' > kind_config.yaml
+    - ./kind create cluster --config kind_config.yaml
+    - ./kind get kubeconfig > kubeconfig
+    # Patch the kubeconfig to reach the cluster from localhost.
+    - sed -i -e 's/0.0.0.0/kubernetes/' kubeconfig
+    - export KUBECONFIG=kubeconfig
+    - docker ps
+
+    # The cluster is now starting up but we'll wait for it later because meanwhile we can set up
+    # the project.
+    - pip install .[dev]
+    - flake8
+    - mypy .
+
+    # Wait for the cluster:
+    - while (./kubectl get nodes | grep NotReady); do echo "Waiting for nodes to be ready"; sleep 1; done;
+    - while (./kubectl get pods -A | grep Pending); do echo "Waiting for pods to be ready"; sleep 1; done;
+    - while (./kubectl get pods -A -o jsonpath='{range .items[*]}{.metadata.name} {.status.containerStatuses[*].ready}{"\n"}{end}' | grep 'false$'); do echo "Waiting for containers to be ready"; sleep 1; done;
+
+    - py.test -vv -s --showlocals
+
+test-3.6:
+  image: python:3.6-buster
+  <<: *test-template
+
+test-3.7:
+  image: python:3.7-buster
+  <<: *test-template
+
+test-3.8:
+  image: python:3.8-buster
+  <<: *test-template
+
+test-3.9:
+  image: python:3.8-buster
+  <<: *test-template
