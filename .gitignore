@@ -1,6 +1,7 @@
 *.py[cod]
 __pycache__
 *.egg-info
+*.bloom
 .cache
 kafka
 .mypy_cache

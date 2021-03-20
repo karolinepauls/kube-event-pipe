@@ -9,6 +9,7 @@ README_FILE = Path(__file__).resolve().with_name('README.rst')
 README = README_FILE.read_text('utf-8')
 REQUIREMENTS = [
     'kubernetes==12.0.1',
+    'pybloomfiltermmap3==0.5.3',
     'requests==2.25.1',
 ]
 DEV_REQUIREMENTS = [
