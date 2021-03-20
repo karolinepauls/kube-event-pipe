@@ -1,16 +1,29 @@
 """Entry point."""
 import logging
+import json
+import sys
+import signal
 from os import environ
 from pathlib import Path
 from pybloomfilter import BloomFilter  # type: ignore
 from kubernetes import client, config, watch  # type: ignore
 
+DEFAULT_CAPACITY = 1_000_000
+DEFAULT_ERROR_RATE = 0.01
 
 log = logging.getLogger(__name__)
 
 
+def signal_to_system_exit(signum, frame):
+    """Raise SystemExit."""
+    log.info('Caught signal %s. Exiting.', signum)
+    sys.exit(0)
+
+
 def pipe_events(
     persistence_path: Path,
+    filter_capacity: int,
+    filter_error_rate: float,
 ):
     """List and watch, deduplicate, and write events to stdout."""
     bloom_filter_file = str(persistence_path / 'filter.bloom')
@@ -18,7 +31,7 @@ def pipe_events(
         events_seen = BloomFilter.open(bloom_filter_file)
         log.info('Opened an existing bloom filter: %s', bloom_filter_file)
     except FileNotFoundError:
-        events_seen = BloomFilter(10000000, 0.01, bloom_filter_file)
+        events_seen = BloomFilter(filter_capacity, filter_error_rate, bloom_filter_file)
         log.info('Created a new bloom filter: %s', bloom_filter_file)
 
     kube_api = client.CoreV1Api()
@@ -42,8 +55,11 @@ def pipe_events(
             event_data = event['raw_object']
             events_seen.add(event_name)
             assert event_name in events_seen
-            print(event_data)
-    except SystemExit:
+            json.dump(event_data, sys.stdout)
+            sys.stdout.write('\n')
+            sys.stdout.flush()
+    except (SystemExit, KeyboardInterrupt):
+        log.info('Terminating')
         events_seen.sync()
         return
 
@@ -53,13 +69,34 @@ def main():
     log_level = environ.get('KUBE_EVENT_PIPE_LOG_LEVEL', 'INFO').upper()
     logging.basicConfig(level=log_level)
 
+    signal.signal(signal.SIGTERM, signal_to_system_exit)
+    signal.signal(signal.SIGQUIT, signal_to_system_exit)
+
     persistence_path = Path(environ.get('KUBE_EVENT_PIPE_PERSISTENCE_PATH', '.')).resolve()
+    try:
+        filter_capacity = int(environ.get('KUBE_EVENT_PIPE_FILTER_CAPACITY', DEFAULT_CAPACITY))
+        if filter_capacity <= 0:
+            raise ValueError
+    except ValueError:
+        log.error('KUBE_EVENT_PIPE_FILTER_CAPACITY must be a positive integer')
+        exit(1)
+
+    try:
+        filter_error_rate = float(environ.get('KUBE_EVENT_PIPE_FILTER_ERROR_RATE',
+                                              DEFAULT_ERROR_RATE))
+        if filter_error_rate <= 0:
+            raise ValueError
+    except ValueError:
+        log.exception('KUBE_EVENT_PIPE_FILTER_ERROR_RATE must be a positive float')
+        exit(1)
 
     log.info(
-        'kube-event-pipe configuration: \n'
-        'log level: %s, \n'
-        'persistence path: %s, \n',
-        log_level, persistence_path,
+        'kube-event-pipe configuration: '
+        'log level: %s, '
+        'persistence path: %s, '
+        'bloom filter capacity: %s '
+        'bloom filter error rate: %s ',
+        log_level, persistence_path, filter_capacity, filter_error_rate,
     )
 
     try:
@@ -69,4 +106,8 @@ def main():
         config.load_incluster_config()
         log.info("Loaded in-cluster config")
 
-    pipe_events(persistence_path)
+    pipe_events(
+        persistence_path=persistence_path,
+        filter_capacity=filter_capacity,
+        filter_error_rate=filter_error_rate,
+    )
