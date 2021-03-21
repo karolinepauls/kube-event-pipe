@@ -4,12 +4,23 @@ import json
 import sys
 import signal
 from os import environ
+from typing import TypeVar, Callable, Union
+from datetime import timedelta
 from pathlib import Path
-from pybloomfilter import BloomFilter  # type: ignore
+from kube_event_pipe.batched_bloom_filter import BatchedBloomFilter  # type: ignore
 from kubernetes import client, config, watch  # type: ignore
 
-DEFAULT_CAPACITY = 1_000_000
-DEFAULT_ERROR_RATE = 0.01
+DEFAULT_CAPACITY = '1_000_000'
+DEFAULT_ERROR_RATE = '0.01'
+DEFAULT_BATCH_COUNT = '3'
+DEFAULT_BATCH_DURATION = str(int(timedelta(hours=1).total_seconds()))
+
+ENV_LOG_LEVEL = 'KUBE_EVENT_PIPE_LOG_LEVEL'
+ENV_PERSISTENCE_PATH = 'KUBE_EVENT_PIPE_PERSISTENCE_PATH'
+ENV_FILTER_CAPACITY = 'KUBE_EVENT_PIPE_FILTER_CAPACITY'
+ENV_FILTER_ERROR_RATE = 'KUBE_EVENT_PIPE_FILTER_ERROR_RATE'
+ENV_BATCH_COUNT = 'KUBE_EVENT_PIPE_BATCH_COUNT'
+ENV_BATCH_DURATION_SEC = 'KUBE_EVENT_PIPE_BATCH_DURATION_SEC'
 
 log = logging.getLogger(__name__)
 
@@ -24,15 +35,17 @@ def pipe_events(
     persistence_path: Path,
     filter_capacity: int,
     filter_error_rate: float,
+    batch_count: int,
+    batch_duration_sec: int,
 ):
     """List and watch, deduplicate, and write events to stdout."""
-    bloom_filter_file = str(persistence_path / 'filter.bloom')
-    try:
-        events_seen = BloomFilter.open(bloom_filter_file)
-        log.info('Opened an existing bloom filter: %s', bloom_filter_file)
-    except FileNotFoundError:
-        events_seen = BloomFilter(filter_capacity, filter_error_rate, bloom_filter_file)
-        log.info('Created a new bloom filter: %s', bloom_filter_file)
+    events_seen: BatchedBloomFilter[str] = BatchedBloomFilter(
+        directory=persistence_path,
+        filter_capacity=filter_capacity,
+        filter_error_rate=filter_error_rate,
+        batch_count=batch_count,
+        batch_duration_sec=batch_duration_sec,
+    )
 
     kube_api = client.CoreV1Api()
     watcher = watch.Watch()
@@ -46,22 +59,39 @@ def pipe_events(
 
             if event_name in events_seen:
                 skipped += 1
+                log.debug('Skipped repeated event: %s: %r', event_name, event_obj.message)
                 continue
             else:
                 if skipped > 0:
                     log.info('New event seen, after skipping %s previously seen events', skipped)
                 skipped = 0
+                log.debug('Logging event: %s: %r', event_name, event_obj.message)
 
             event_data = event['raw_object']
             events_seen.add(event_name)
-            assert event_name in events_seen
             json.dump(event_data, sys.stdout)
             sys.stdout.write('\n')
             sys.stdout.flush()
     except (SystemExit, KeyboardInterrupt):
         log.info('Terminating')
-        events_seen.sync()
+        events_seen.close()
         return
+
+
+Num = TypeVar('Num', bound=Union[int, float])
+
+
+def env_get_positive_number(key: str, default: str, constructor: Callable[[str], Num]) -> Num:
+    """Parse the named environment variable as the given number type."""
+    val = None
+    try:
+        val = constructor(environ.get(key, default))
+        if val <= 0:
+            raise ValueError
+    except ValueError:
+        log.error('Environment variable %r must be a positive %s, is %r', key, constructor, val)
+        exit(1)
+    return val
 
 
 def main():
@@ -72,31 +102,31 @@ def main():
     signal.signal(signal.SIGTERM, signal_to_system_exit)
     signal.signal(signal.SIGQUIT, signal_to_system_exit)
 
-    persistence_path = Path(environ.get('KUBE_EVENT_PIPE_PERSISTENCE_PATH', '.')).resolve()
-    try:
-        filter_capacity = int(environ.get('KUBE_EVENT_PIPE_FILTER_CAPACITY', DEFAULT_CAPACITY))
-        if filter_capacity <= 0:
-            raise ValueError
-    except ValueError:
-        log.error('KUBE_EVENT_PIPE_FILTER_CAPACITY must be a positive integer')
-        exit(1)
+    persistence_path = Path(environ.get(ENV_PERSISTENCE_PATH, '.')).resolve()
 
-    try:
-        filter_error_rate = float(environ.get('KUBE_EVENT_PIPE_FILTER_ERROR_RATE',
-                                              DEFAULT_ERROR_RATE))
-        if filter_error_rate <= 0:
-            raise ValueError
-    except ValueError:
-        log.exception('KUBE_EVENT_PIPE_FILTER_ERROR_RATE must be a positive float')
-        exit(1)
+    filter_capacity = env_get_positive_number(
+        ENV_FILTER_CAPACITY, DEFAULT_CAPACITY, constructor=int)
+    filter_error_rate = env_get_positive_number(
+        ENV_FILTER_ERROR_RATE, DEFAULT_ERROR_RATE, constructor=float)
+    batch_count = env_get_positive_number(
+        ENV_BATCH_COUNT, DEFAULT_BATCH_COUNT, constructor=int)
+    batch_duration_sec = env_get_positive_number(
+        ENV_BATCH_DURATION_SEC, DEFAULT_BATCH_DURATION, constructor=int)
 
     log.info(
         'kube-event-pipe configuration: '
-        'log level: %s, '
-        'persistence path: %s, '
-        'bloom filter capacity: %s '
-        'bloom filter error rate: %s ',
-        log_level, persistence_path, filter_capacity, filter_error_rate,
+        '%s: %s, '
+        '%s: %s, '
+        '%s: %s, '
+        '%s: %s, '
+        '%s: %s, '
+        '%s: %s',
+        ENV_LOG_LEVEL, log_level,
+        ENV_PERSISTENCE_PATH, persistence_path,
+        ENV_FILTER_CAPACITY, filter_capacity,
+        ENV_FILTER_ERROR_RATE, filter_error_rate,
+        ENV_BATCH_COUNT, batch_count,
+        ENV_BATCH_DURATION_SEC, batch_duration_sec,
     )
 
     try:
@@ -110,4 +140,6 @@ def main():
         persistence_path=persistence_path,
         filter_capacity=filter_capacity,
         filter_error_rate=filter_error_rate,
+        batch_count=batch_count,
+        batch_duration_sec=batch_duration_sec,
     )

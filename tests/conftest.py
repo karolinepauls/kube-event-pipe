@@ -1,7 +1,7 @@
 """Test setup."""
-import signal
 import os
 import json
+import logging
 from contextlib import contextmanager
 from functools import partial
 import pytest  # type: ignore
@@ -10,9 +10,34 @@ from typing import List, Iterator, Dict, Callable, ContextManager
 from pathlib import Path
 from time import sleep
 from kubernetes import client, config  # type: ignore
+from kubernetes.client.models.v1_event import V1Event  # type: ignore
+from kube_event_pipe.main import ENV_LOG_LEVEL
 
 
 TESTS_DIR = Path(__file__).parent
+
+
+def make_kube_event(
+    kube_api,
+    generate_name='test-event.',
+    namespace='default',
+    message='Test event',
+) -> V1Event:
+    """Create a testing pod."""
+    event = kube_api.create_namespaced_event(
+        namespace,
+        {
+            'metadata': {'generateName': generate_name},
+            'message': message,
+        },
+    )
+    return event
+
+
+@pytest.fixture(autouse=True)
+def logging_setup() -> None:
+    """Set up logging in tests automatically."""
+    logging.getLogger('kubernetes').setLevel('INFO')
 
 
 @pytest.fixture
@@ -31,7 +56,7 @@ def kube_api():
 
 @pytest.fixture
 def clean_kube(kube_api) -> Iterator[None]:
-    """Clean up Kubernetes resources on teardown."""
+    """Clean up events on startup, and other created Kubernetes resources on teardown."""
     def get_resource(api_call):
         return {(i.metadata.name, i.metadata.namespace) for i in api_call().items}
 
@@ -79,6 +104,7 @@ def run_kube_event_pipe(
     state_location.mkdir(exist_ok=True)
 
     subprocess_env = os.environ.copy()
+    subprocess_env.setdefault(ENV_LOG_LEVEL, 'DEBUG')
     subprocess_env.update(env)
     subprocess_env['KUBE_EVENT_PIPE_PERSISTENCE_PATH'] = str(state_location)
 
@@ -90,17 +116,17 @@ def run_kube_event_pipe(
             env=subprocess_env
         )
 
-        sleep(5)  # Let it read all events so far.
+        # Let it read all events so far. There should be none.
+        sleep(2)
 
         try:
             with output_file.open('r') as output_readable:
-
                 def read_events() -> List[dict]:
                     return [json.loads(e) for e in output_readable.readlines()]
 
                 yield read_events
         finally:
-            process.send_signal(signal.SIGINT)
+            process.terminate()
             process.wait()
 
 

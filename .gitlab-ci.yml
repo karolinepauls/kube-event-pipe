@@ -62,5 +62,5 @@ test-3.8:
   <<: *test-template
 
 test-3.9:
-  image: python:3.8-buster
+  image: python:3.9-buster
   <<: *test-template
