@@ -1,0 +1,13 @@
+*.py[cod]
+__pycache__
+*.egg-info
+*.bloom
+.cache
+kafka
+.mypy_cache
+.pytest_cache
+dist
+build
+docs/_build
+Dockerfile
+tests
