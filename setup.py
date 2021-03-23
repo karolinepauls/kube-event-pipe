@@ -4,7 +4,7 @@ from pathlib import Path
 from setuptools import setup  # type: ignore
 
 
-VERSION = '0.0.1'
+VERSION = '0.1.0'
 README_FILE = Path(__file__).resolve().with_name('README.rst')
 README = README_FILE.read_text('utf-8')
 REQUIREMENTS = [
