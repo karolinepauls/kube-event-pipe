@@ -41,7 +41,7 @@ def test_bloom_filters_rotation(kube_api, clean_kube, kube_event_pipe, tmpdir_pa
             check=lambda f: (len(f) == 3 and f != rotated_filters_again),
         )
         assert len(rotated_filters_over_batch_count) == 3, (
-            "Bloom filters shouldn't exceed batch count")
+            "Bloom filters shouldn't exceed the batch count")
 
         # Ensure filters are
         assert initial_filters == rotated_filters[:1]

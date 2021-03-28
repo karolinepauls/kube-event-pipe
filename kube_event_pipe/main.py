@@ -11,6 +11,8 @@ from kube_event_pipe.batched_bloom_filter import BatchedBloomFilter  # type: ign
 from kubernetes import client, config, watch  # type: ignore
 
 DEFAULT_DESTINATION = '-'
+DEFAULT_LOG_LEVEL = 'INFO'
+DEFAULT_PERSISTENCE_PATH = '.'
 DEFAULT_CAPACITY = '1_000_000'
 DEFAULT_ERROR_RATE = '0.01'
 DEFAULT_BATCH_COUNT = '3'
@@ -99,14 +101,14 @@ def env_get_positive_number(key: str, default: str, constructor: Callable[[str],
 
 def main():
     """Run kube-event-pipe."""
-    log_level = environ.get('KUBE_EVENT_PIPE_LOG_LEVEL', 'INFO').upper()
+    log_level = environ.get('KUBE_EVENT_PIPE_LOG_LEVEL', DEFAULT_LOG_LEVEL).upper()
     logging.basicConfig(level=log_level)
 
     signal.signal(signal.SIGTERM, signal_to_system_exit)
     signal.signal(signal.SIGQUIT, signal_to_system_exit)
 
     destination = environ.get(ENV_DESTINATION, DEFAULT_DESTINATION)
-    persistence_path = Path(environ.get(ENV_PERSISTENCE_PATH, '.')).resolve()
+    persistence_path = Path(environ.get(ENV_PERSISTENCE_PATH, DEFAULT_PERSISTENCE_PATH)).resolve()
     filter_capacity = env_get_positive_number(
         ENV_FILTER_CAPACITY, DEFAULT_CAPACITY, constructor=int)
     filter_error_rate = env_get_positive_number(
