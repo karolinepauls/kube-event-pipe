@@ -11,7 +11,7 @@ from pathlib import Path
 from time import sleep
 from kubernetes import client, config  # type: ignore
 from kubernetes.client.models.v1_event import V1Event  # type: ignore
-from kube_event_pipe.main import ENV_LOG_LEVEL
+from kube_event_pipe.main import ENV_LOG_LEVEL, ENV_DESTINATION, ENV_PERSISTENCE_PATH
 
 
 TESTS_DIR = Path(__file__).parent
@@ -96,6 +96,7 @@ def clean_kube(kube_api) -> Iterator[None]:
 @contextmanager
 def run_kube_event_pipe(
     tmpdir_path: Path,
+    output_file_name: str = 'filtered.log',
     state_subdir: str = '',
     env: Dict[str, str] = {},
 ) -> Iterator[Callable[[], List[dict]]]:
@@ -106,33 +107,35 @@ def run_kube_event_pipe(
     subprocess_env = os.environ.copy()
     subprocess_env.setdefault(ENV_LOG_LEVEL, 'DEBUG')
     subprocess_env.update(env)
-    subprocess_env['KUBE_EVENT_PIPE_PERSISTENCE_PATH'] = str(state_location)
+    subprocess_env[ENV_PERSISTENCE_PATH] = str(state_location)
 
-    output_file = tmpdir_path / 'filtered.log'
-    with output_file.open('w') as out:
-        process = Popen(
-            ['kube-event-pipe', ''],
-            stdout=out,
-            env=subprocess_env
-        )
+    output_file = tmpdir_path / output_file_name
+    subprocess_env[ENV_DESTINATION] = str(output_file)
+    process = Popen(
+        ['kube-event-pipe', ''],
+        env=subprocess_env
+    )
 
-        # Let it read all events so far. There should be none.
-        sleep(2)
+    # Let it read all events so far. There should be none.
+    sleep(2)
 
-        try:
-            with output_file.open('r') as output_readable:
-                def read_events() -> List[dict]:
-                    return [json.loads(e) for e in output_readable.readlines()]
+    try:
+        with open(output_file, 'r') as output_readable:
+            def read_events() -> List[dict]:
+                return [json.loads(e) for e in output_readable.readlines()]
 
-                yield read_events
-        finally:
-            process.terminate()
-            process.wait()
+            yield read_events
+    finally:
+        process.terminate()
+        process.wait()
+
+
+KubeEventPipe = Callable[..., ContextManager[Callable[[], List[dict]]]]
 
 
 @pytest.fixture
 def kube_event_pipe(
     kube_api, clean_kube, tmpdir_path: Path,
-) -> Callable[[], ContextManager[Callable[[], List[dict]]]]:
+) -> KubeEventPipe:
     """Produce instances of the run_kube_event_pipe context manager."""
     return partial(run_kube_event_pipe, tmpdir_path)

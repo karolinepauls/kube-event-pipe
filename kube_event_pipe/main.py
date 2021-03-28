@@ -4,17 +4,19 @@ import json
 import sys
 import signal
 from os import environ
-from typing import TypeVar, Callable, Union
+from typing import TypeVar, Callable, Union, IO
 from datetime import timedelta
 from pathlib import Path
 from kube_event_pipe.batched_bloom_filter import BatchedBloomFilter  # type: ignore
 from kubernetes import client, config, watch  # type: ignore
 
+DEFAULT_DESTINATION = '-'
 DEFAULT_CAPACITY = '1_000_000'
 DEFAULT_ERROR_RATE = '0.01'
 DEFAULT_BATCH_COUNT = '3'
 DEFAULT_BATCH_DURATION = str(int(timedelta(hours=1).total_seconds()))
 
+ENV_DESTINATION = 'KUBE_EVENT_PIPE_DESTINATION'
 ENV_LOG_LEVEL = 'KUBE_EVENT_PIPE_LOG_LEVEL'
 ENV_PERSISTENCE_PATH = 'KUBE_EVENT_PIPE_PERSISTENCE_PATH'
 ENV_FILTER_CAPACITY = 'KUBE_EVENT_PIPE_FILTER_CAPACITY'
@@ -32,6 +34,7 @@ def signal_to_system_exit(signum, frame):
 
 
 def pipe_events(
+    destination_file: IO,
     persistence_path: Path,
     filter_capacity: int,
     filter_error_rate: float,
@@ -69,9 +72,9 @@ def pipe_events(
 
             event_data = event['raw_object']
             events_seen.add(event_name)
-            json.dump(event_data, sys.stdout)
-            sys.stdout.write('\n')
-            sys.stdout.flush()
+            json.dump(event_data, destination_file)
+            destination_file.write('\n')
+            destination_file.flush()
     except (SystemExit, KeyboardInterrupt):
         log.info('Terminating')
         events_seen.close()
@@ -102,8 +105,8 @@ def main():
     signal.signal(signal.SIGTERM, signal_to_system_exit)
     signal.signal(signal.SIGQUIT, signal_to_system_exit)
 
+    destination = environ.get(ENV_DESTINATION, DEFAULT_DESTINATION)
     persistence_path = Path(environ.get(ENV_PERSISTENCE_PATH, '.')).resolve()
-
     filter_capacity = env_get_positive_number(
         ENV_FILTER_CAPACITY, DEFAULT_CAPACITY, constructor=int)
     filter_error_rate = env_get_positive_number(
@@ -120,7 +123,9 @@ def main():
         '%s: %s, '
         '%s: %s, '
         '%s: %s, '
+        '%s: %s, '
         '%s: %s',
+        ENV_DESTINATION, destination,
         ENV_LOG_LEVEL, log_level,
         ENV_PERSISTENCE_PATH, persistence_path,
         ENV_FILTER_CAPACITY, filter_capacity,
@@ -136,7 +141,13 @@ def main():
         config.load_incluster_config()
         log.info("Loaded in-cluster config")
 
+    if destination == '-':
+        destination_file = sys.stdout
+    else:
+        destination_file = open(destination, 'a')
+
     pipe_events(
+        destination_file=destination_file,
         persistence_path=persistence_path,
         filter_capacity=filter_capacity,
         filter_error_rate=filter_error_rate,
