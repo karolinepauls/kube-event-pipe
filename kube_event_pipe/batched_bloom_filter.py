@@ -90,8 +90,6 @@ class BatchedBloomFilter(Generic[Element]):
 
     def __contains__(self, element: Element):
         """Check if the element has been seen by any of the filters."""
-        self.rotate_if_needed()
-
         for bf in self.batches:
             if element in bf:
                 return True
@@ -99,6 +97,7 @@ class BatchedBloomFilter(Generic[Element]):
 
     def add(self, element: Element):
         """Add the element to the most recent filter."""
+        self.rotate_if_needed()
         self.recent_filter.add(element)
 
     def close(self):
