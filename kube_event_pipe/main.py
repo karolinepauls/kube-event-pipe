@@ -31,7 +31,7 @@ log = logging.getLogger(__name__)
 
 def signal_to_system_exit(signum, frame):
     """Raise SystemExit."""
-    log.info('Caught signal %s. Exiting.', signum)
+    sys.stderr.write(f'Caught signal {signum}. Exiting.\n')
     sys.exit(0)
 
 
@@ -56,7 +56,8 @@ def pipe_events(
     reopen_file = False
 
     def reopen(signum, frame):
-        log.info('Caught SIGHUP. Will close and reopen %s on the next event.', destination_path)
+        sys.stderr.write(
+            f'Caught SIGHUP. Will close and reopen {destination_path} on the next event.\n')
         nonlocal reopen_file
         reopen_file = True
 
