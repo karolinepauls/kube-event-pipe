@@ -3,13 +3,18 @@ import time
 from typing import Callable, TypeVar
 
 
+DEFAULT_TIMEOUT = 15.0
 Ret = TypeVar('Ret')
+
+
+class Timeout(Exception):
+    """Timeout expired in wait_until."""
 
 
 def wait_until(
     fn: Callable[[], Ret],
     check: Callable[[Ret], bool] = bool,
-    timeout: float = 15,
+    timeout: float = DEFAULT_TIMEOUT,
     interval: float = 0.1,
     message: str = 'Condition not true in {time} seconds.',
 ) -> Ret:
@@ -22,4 +27,4 @@ def wait_until(
             return val
         time.sleep(interval)
 
-    raise AssertionError(message.format(timeout=timeout))
+    raise Timeout(message.format(time=timeout))

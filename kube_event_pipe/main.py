@@ -60,20 +60,22 @@ def pipe_events(
         log.info('Watching events...')
         for event in events:
             event_obj = event['object']
-            event_name = event_obj.metadata.name
+            # We pass a string as event identity because otherwise standard Python's `hash` function
+            # is used, rather than a dedicated hash functions.
+            event_identity = f'{event_obj.metadata.name}-{event_obj.count}'
 
-            if event_name in events_seen:
+            if event_identity in events_seen:
                 skipped += 1
-                log.debug('Skipped repeated event: %s: %r', event_name, event_obj.message)
+                log.debug('Skipped repeated event: %s: %r', event_identity, event_obj.message)
                 continue
             else:
                 if skipped > 0:
                     log.info('New event seen, after skipping %s previously seen events', skipped)
                 skipped = 0
-                log.debug('Logging event: %s: %r', event_name, event_obj.message)
+                log.debug('Logging event: %s: %r', event_identity, event_obj.message)
 
             event_data = event['raw_object']
-            events_seen.add(event_name)
+            events_seen.add(event_identity)
             json.dump(event_data, destination_file)
             destination_file.write('\n')
             destination_file.flush()

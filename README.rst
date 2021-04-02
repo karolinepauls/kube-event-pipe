@@ -16,9 +16,9 @@ How it works
 ------------
 
 A rotated set of bloom filters is maintained, with all of them read from and only the most recent
-one written to. Message name (``.metadata.name``) is used for key identity and is saved and looked
-up in the bloom filters. This lets us deduplicate watched events. Since bloom filters are mmapped,
-the memory of seen messages persists across restarts.
+one written to. Pairs of message name and count (``.metadata.name`` and ``.count``) are used for key
+identity and are saved and looked up in the bloom filters. This lets us deduplicate watched events.
+Since bloom filters are mmapped, the memory of seen messages persists across restarts.
 
 
 Configuration

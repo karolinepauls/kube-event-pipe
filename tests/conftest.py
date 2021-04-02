@@ -6,12 +6,14 @@ from contextlib import contextmanager
 from functools import partial
 import pytest  # type: ignore
 from subprocess import Popen
-from typing import List, Iterator, Dict, Callable, ContextManager
+from typing import List, Iterator, Dict, Callable, ContextManager, Optional
+from typing_extensions import Protocol
 from pathlib import Path
 from time import sleep
 from kubernetes import client, config  # type: ignore
 from kubernetes.client.models.v1_event import V1Event  # type: ignore
 from kube_event_pipe.main import ENV_LOG_LEVEL, ENV_DESTINATION, ENV_PERSISTENCE_PATH
+from tests.wait import wait_until, DEFAULT_TIMEOUT
 
 
 TESTS_DIR = Path(__file__).parent
@@ -19,16 +21,19 @@ TESTS_DIR = Path(__file__).parent
 
 def make_kube_event(
     kube_api,
-    generate_name='test-event.',
-    namespace='default',
-    message='Test event',
+    name: Optional[str] = None,
+    generate_name: str = 'test-event.',
+    namespace: str = 'default',
+    message: str = 'Test event',
+    count: Optional[int] = None,
 ) -> V1Event:
     """Create a testing pod."""
     event = kube_api.create_namespaced_event(
         namespace,
         {
-            'metadata': {'generateName': generate_name},
+            'metadata': {'name': name} if name is not None else {'generateName': generate_name},
             'message': message,
+            'count': count,
         },
     )
     return event
@@ -93,13 +98,21 @@ def clean_kube(kube_api) -> Iterator[None]:
             break
 
 
+class GetEvents(Protocol):
+    """Typing protocol for ``get_events``."""
+
+    def __call__(self, min_count: int = 0, timeout: float = DEFAULT_TIMEOUT) -> List[dict]:
+        """Signature."""
+        ...
+
+
 @contextmanager
 def run_kube_event_pipe(
     tmpdir_path: Path,
     output_file_name: str = 'filtered.log',
     state_subdir: str = '',
     env: Dict[str, str] = {},
-) -> Iterator[Callable[[], List[dict]]]:
+) -> Iterator[GetEvents]:
     """Run the program in a subprocess."""
     state_location = tmpdir_path / state_subdir
     state_location.mkdir(exist_ok=True)
@@ -121,16 +134,25 @@ def run_kube_event_pipe(
 
     try:
         with open(output_file, 'r') as output_readable:
-            def read_events() -> List[dict]:
-                return [json.loads(e) for e in output_readable.readlines()]
+            def get_events(min_count: int = 0, timeout=DEFAULT_TIMEOUT) -> List[dict]:
+                events = []
 
-            yield read_events
+                def accumulate_events() -> List[Dict]:
+                    new_events = [json.loads(e) for e in output_readable.readlines()]
+                    events.extend(new_events)
+                    return events
+
+                wait_until(accumulate_events, check=lambda f: len(f) >= min_count)
+
+                return events
+
+            yield get_events
     finally:
         process.terminate()
         process.wait()
 
 
-KubeEventPipe = Callable[..., ContextManager[Callable[[], List[dict]]]]
+KubeEventPipe = Callable[..., ContextManager[GetEvents]]
 
 
 @pytest.fixture
