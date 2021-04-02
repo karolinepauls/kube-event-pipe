@@ -50,3 +50,16 @@ Development
     cd kube-event-pipe
     # virtualenv ...
     pip install -e .[dev]
+
+
+Changelog
+---------
+- v0.2.0
+  - Output file parameter
+  - Use '{event_obj.metadata.name}-{event_obj.count}' as event identity
+  - Reopen the output file on SIGHUP (support for external log rotation)
+  - Bugfix - don't use logging in signal handlers
+- v0.1.0
+  - Log watching and deduplication
+  - Bloom filter rotation
+  - Stdout output
