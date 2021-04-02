@@ -4,7 +4,7 @@ import json
 import sys
 import signal
 from os import environ
-from typing import TypeVar, Callable, Union, IO
+from typing import TypeVar, Callable, Union
 from datetime import timedelta
 from pathlib import Path
 from kube_event_pipe.batched_bloom_filter import BatchedBloomFilter  # type: ignore
@@ -36,7 +36,7 @@ def signal_to_system_exit(signum, frame):
 
 
 def pipe_events(
-    destination_file: IO,
+    destination_path: Path,
     persistence_path: Path,
     filter_capacity: int,
     filter_error_rate: float,
@@ -52,6 +52,16 @@ def pipe_events(
         batch_duration_sec=batch_duration_sec,
     )
 
+    destination_file = destination_path.open('a')
+    reopen_file = False
+
+    def reopen(signum, frame):
+        log.info('Caught SIGHUP. Will close and reopen %s on the next event.', destination_path)
+        nonlocal reopen_file
+        reopen_file = True
+
+    signal.signal(signal.SIGHUP, reopen)
+
     kube_api = client.CoreV1Api()
     watcher = watch.Watch()
     events = watcher.stream(kube_api.list_event_for_all_namespaces)
@@ -59,6 +69,13 @@ def pipe_events(
         skipped = 0
         log.info('Watching events...')
         for event in events:
+            # Support for log rotation.
+            if reopen_file:
+                log.info('Log rotation. Reopening file: %s.', destination_path)
+                destination_file.close()
+                destination_file = destination_path.open('a')
+                reopen_file = False
+
             event_obj = event['object']
             # We pass a string as event identity because otherwise standard Python's `hash` function
             # is used, rather than a dedicated hash functions.
@@ -146,12 +163,11 @@ def main():
         log.info("Loaded in-cluster config")
 
     if destination == '-':
-        destination_file = sys.stdout
-    else:
-        destination_file = open(destination, 'a')
+        destination = '/dev/stdout'
+    destination_path = Path(destination)
 
     pipe_events(
-        destination_file=destination_file,
+        destination_path=destination_path,
         persistence_path=persistence_path,
         filter_capacity=filter_capacity,
         filter_error_rate=filter_error_rate,

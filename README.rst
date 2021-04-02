@@ -20,6 +20,9 @@ one written to. Pairs of message name and count (``.metadata.name`` and ``.count
 identity and are saved and looked up in the bloom filters. This lets us deduplicate watched events.
 Since bloom filters are mmapped, the memory of seen messages persists across restarts.
 
+The log destination file (denoted by ``KUBE_EVENT_PIPE_DESTINATION``) gets reopened on SIGHUP. This
+is to support external log rotation.
+
 
 Configuration
 -------------

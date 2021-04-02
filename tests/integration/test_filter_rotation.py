@@ -3,11 +3,16 @@ from pathlib import Path
 from typing import List
 from time import sleep
 from kube_event_pipe.main import ENV_BATCH_DURATION_SEC, ENV_BATCH_COUNT
-from tests.conftest import make_kube_event
+from tests.conftest import make_kube_event, KubeEventPipe
 from tests.wait import wait_until
 
 
-def test_bloom_filters_rotation(kube_api, clean_kube, kube_event_pipe, tmpdir_path) -> None:
+def test_bloom_filters_rotation(
+    kube_api,
+    clean_kube,
+    kube_event_pipe: KubeEventPipe,
+    tmpdir_path: Path,
+) -> None:
     """
     Test rotating the filters.
 

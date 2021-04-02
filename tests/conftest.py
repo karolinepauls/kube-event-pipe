@@ -1,13 +1,13 @@
 """Test setup."""
 import os
+import signal
 import json
 import logging
 from contextlib import contextmanager
 from functools import partial
 import pytest  # type: ignore
 from subprocess import Popen
-from typing import List, Iterator, Dict, Callable, ContextManager, Optional
-from typing_extensions import Protocol
+from typing import List, Iterator, Dict, Callable, ContextManager, Optional, IO
 from pathlib import Path
 from time import sleep
 from kubernetes import client, config  # type: ignore
@@ -98,12 +98,60 @@ def clean_kube(kube_api) -> Iterator[None]:
             break
 
 
-class GetEvents(Protocol):
-    """Typing protocol for ``get_events``."""
+class KubeEventPipeHandle():
+    """Kube-event-pipe process handler."""
 
-    def __call__(self, min_count: int = 0, timeout: float = DEFAULT_TIMEOUT) -> List[dict]:
-        """Signature."""
-        ...
+    process: Popen
+    output_path: Path
+    output_file: IO
+    rotated_files: List[Path]
+
+    def __init__(self, process: Popen, output_path: Path):
+        """Set up."""
+        self.process = process
+        self.output_path = output_path
+        self.output_file = output_path.open('r')
+        self.rotated_paths: List[Path] = []
+
+    def get_events(self, min_count: int = 0, timeout: float = DEFAULT_TIMEOUT) -> List[dict]:
+        """
+        Read `min_count` events or time out.
+
+        :raise: tests.wait.Timeout
+        """
+        events = []
+
+        def accumulate_events() -> List[Dict]:
+            if self.output_file.closed:
+                try:
+                    self.output_file = self.output_path.open('r')
+                except FileNotFoundError:
+                    # No records appeared yet after rotaton.
+                    return []
+            new_events = [json.loads(e) for e in self.output_file.readlines()]
+            events.extend(new_events)
+            return events
+
+        wait_until(accumulate_events, check=lambda f: len(f) >= min_count)
+
+        return events
+
+    def rotate_output(self) -> None:
+        """Rotate the output file and reopen."""
+        self.process.send_signal(signal.SIGHUP)
+
+        output_path = Path(self.output_file.name)
+        rotated_path = output_path.with_suffix(f'{output_path.suffix}.1')
+        output_path.rename(rotated_path)
+        self.rotated_paths.append(rotated_path)
+
+        self.output_file.close()
+
+    def close(self) -> None:
+        """Tear down."""
+        self.output_file.close()
+        self.process.terminate()
+        self.process.wait()
 
 
 @contextmanager
@@ -111,19 +159,20 @@ def run_kube_event_pipe(
     tmpdir_path: Path,
     output_file_name: str = 'filtered.log',
     state_subdir: str = '',
-    env: Dict[str, str] = {},
-) -> Iterator[GetEvents]:
+    env: Optional[Dict[str, str]] = None,
+) -> Iterator[KubeEventPipeHandle]:
     """Run the program in a subprocess."""
     state_location = tmpdir_path / state_subdir
     state_location.mkdir(exist_ok=True)
 
     subprocess_env = os.environ.copy()
     subprocess_env.setdefault(ENV_LOG_LEVEL, 'DEBUG')
-    subprocess_env.update(env)
+    if env is not None:
+        subprocess_env.update(env)
     subprocess_env[ENV_PERSISTENCE_PATH] = str(state_location)
 
-    output_file = tmpdir_path / output_file_name
-    subprocess_env[ENV_DESTINATION] = str(output_file)
+    output_path = tmpdir_path / output_file_name
+    subprocess_env[ENV_DESTINATION] = str(output_path)
     process = Popen(
         ['kube-event-pipe', ''],
         env=subprocess_env
@@ -133,26 +182,13 @@ def run_kube_event_pipe(
     sleep(2)
 
     try:
-        with open(output_file, 'r') as output_readable:
-            def get_events(min_count: int = 0, timeout=DEFAULT_TIMEOUT) -> List[dict]:
-                events = []
-
-                def accumulate_events() -> List[Dict]:
-                    new_events = [json.loads(e) for e in output_readable.readlines()]
-                    events.extend(new_events)
-                    return events
-
-                wait_until(accumulate_events, check=lambda f: len(f) >= min_count)
-
-                return events
-
-            yield get_events
+        event_pipe = KubeEventPipeHandle(process=process, output_path=output_path)
+        yield event_pipe
     finally:
-        process.terminate()
-        process.wait()
+        event_pipe.close()
 
 
-KubeEventPipe = Callable[..., ContextManager[GetEvents]]
+KubeEventPipe = Callable[..., ContextManager[KubeEventPipeHandle]]
 
 
 @pytest.fixture
