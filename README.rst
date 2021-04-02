@@ -3,6 +3,9 @@ kube-event-pipe
 
 Write deduplicated events to a file as JSON.
 
+- `Source repository <https://gitlab.com/karolinepauls/kube-event-pipe>`_
+- `Docker Hub <https://hub.docker.com/r/karolinepauls/kube-event-pipe>`_
+
 
 Installation
 ------------
@@ -26,6 +29,10 @@ is to support external log rotation.
 
 Configuration
 -------------
+
+If you're reading this on Docker Hub, check `GitLab
+<https://gitlab.com/karolinepauls/kube-event-pipe/-/blob/master/README.rst>`_ for a well-rendered
+table.
 
 ===================================  =====================================================  =============
 Variable                             Description                                            Default value
