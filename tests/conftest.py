@@ -3,10 +3,11 @@ import os
 import signal
 import json
 import logging
+from fcntl import fcntl, F_GETFL, F_SETFL
 from contextlib import contextmanager
 from functools import partial
 import pytest  # type: ignore
-from subprocess import Popen
+from subprocess import Popen, PIPE
 from typing import List, Iterator, Dict, Callable, ContextManager, Optional, IO
 from pathlib import Path
 from time import sleep
@@ -110,8 +111,14 @@ class KubeEventPipeHandle():
         """Set up."""
         self.process = process
         self.output_path = output_path
-        self.output_file = output_path.open('r')
+        self._open_output()
         self.rotated_paths: List[Path] = []
+
+    def _open_output(self):
+        """Open the output file, which, if it's a pipe, needs to be made non-blocking."""
+        self.output_file = self.output_path.open('r')
+        existing_flags = fcntl(self.output_file, F_GETFL)
+        fcntl(self.output_file, F_SETFL, existing_flags | os.O_NONBLOCK)
 
     def get_events(self, min_count: int = 0, timeout: float = DEFAULT_TIMEOUT) -> List[dict]:
         """
@@ -124,7 +131,7 @@ class KubeEventPipeHandle():
         def accumulate_events() -> List[Dict]:
             if self.output_file.closed:
                 try:
-                    self.output_file = self.output_path.open('r')
+                    self._open_output()
                 except FileNotFoundError:
                     # No records appeared yet after rotaton.
                     return []
@@ -138,14 +145,13 @@ class KubeEventPipeHandle():
 
     def rotate_output(self) -> None:
         """Rotate the output file and reopen."""
-        self.process.send_signal(signal.SIGHUP)
-
         output_path = Path(self.output_file.name)
         rotated_path = output_path.with_suffix(f'{output_path.suffix}.1')
         output_path.rename(rotated_path)
         self.rotated_paths.append(rotated_path)
-
         self.output_file.close()
+
+        self.process.send_signal(signal.SIGHUP)
 
     def close(self) -> None:
         """Tear down."""
@@ -157,11 +163,15 @@ class KubeEventPipeHandle():
 @contextmanager
 def run_kube_event_pipe(
     tmpdir_path: Path,
-    output_file_name: str = 'filtered.log',
+    output_file_name: Optional[str] = 'filtered.log',
     state_subdir: str = '',
     env: Optional[Dict[str, str]] = None,
 ) -> Iterator[KubeEventPipeHandle]:
-    """Run the program in a subprocess."""
+    """
+    Run the program in a subprocess.
+
+    If `output_file_name` is None, the process will write to stdout.
+    """
     state_location = tmpdir_path / state_subdir
     state_location.mkdir(exist_ok=True)
 
@@ -171,12 +181,22 @@ def run_kube_event_pipe(
         subprocess_env.update(env)
     subprocess_env[ENV_PERSISTENCE_PATH] = str(state_location)
 
-    output_path = tmpdir_path / output_file_name
-    subprocess_env[ENV_DESTINATION] = str(output_path)
+    if output_file_name is not None:
+        output_path = tmpdir_path / output_file_name
+        subprocess_env[ENV_DESTINATION] = str(output_path)
+        stdout = None
+    else:
+        stdout = PIPE
+
     process = Popen(
         ['kube-event-pipe', ''],
-        env=subprocess_env
+        env=subprocess_env,
+        stdout=stdout,
     )
+
+    # If writing to stdout, open it.
+    if stdout == PIPE:
+        output_path = Path('/proc') / str(process.pid) / 'fd' / '1'
 
     # Let it read all events so far. There should be none.
     sleep(2)

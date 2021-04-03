@@ -1,7 +1,9 @@
 kube-event-pipe
 ===============
 
-Write deduplicated events to a file as JSON.
+Kubernetes event exporter. Writes deduplicated events to a file as JSON.
+
+Created because existing solutions lead to either event duplication or event loss on restart.
 
 - `Source repository <https://gitlab.com/karolinepauls/kube-event-pipe>`_
 - `Docker Hub <https://hub.docker.com/r/karolinepauls/kube-event-pipe>`_
@@ -61,6 +63,8 @@ Development
 
 Changelog
 ---------
+- v0.2.1
+  - Bug fix for pipe output
 - v0.2.0
   - Output file parameter
   - Use '{event_obj.metadata.name}-{event_obj.count}' as event identity

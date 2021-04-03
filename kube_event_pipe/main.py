@@ -3,8 +3,9 @@ import logging
 import json
 import sys
 import signal
+import errno
 from os import environ
-from typing import TypeVar, Callable, Union
+from typing import TypeVar, Callable, Union, IO
 from datetime import timedelta
 from pathlib import Path
 from kube_event_pipe.batched_bloom_filter import BatchedBloomFilter  # type: ignore
@@ -35,6 +36,17 @@ def signal_to_system_exit(signum, frame):
     sys.exit(0)
 
 
+def open_destination(destination_path: Path) -> IO:
+    """Open a normal file for appending and a pipe for writing."""
+    try:
+        destination_file = destination_path.open('a')
+    except OSError as e:
+        if e.errno != errno.ESPIPE:
+            raise
+        destination_file = destination_path.open('w')
+    return destination_file
+
+
 def pipe_events(
     destination_path: Path,
     persistence_path: Path,
@@ -52,7 +64,7 @@ def pipe_events(
         batch_duration_sec=batch_duration_sec,
     )
 
-    destination_file = destination_path.open('a')
+    destination_file = open_destination(destination_path)
     reopen_file = False
 
     def reopen(signum, frame):
@@ -74,7 +86,7 @@ def pipe_events(
             if reopen_file:
                 log.info('Log rotation. Reopening file: %s.', destination_path)
                 destination_file.close()
-                destination_file = destination_path.open('a')
+                destination_file = open_destination(destination_path)
                 reopen_file = False
 
             event_obj = event['object']
