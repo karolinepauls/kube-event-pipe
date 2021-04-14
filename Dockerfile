@@ -2,7 +2,8 @@ FROM python:3.9-buster AS build
 
 WORKDIR /opt/setup/
 
-COPY . .
+COPY setup.py README.rst ./
+COPY kube_event_pipe kube_event_pipe/
 
 RUN pip install .
 
