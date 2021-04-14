@@ -63,14 +63,32 @@ Development
 
 Changelog
 ---------
+- v0.2.2
+
+  - Dockerfile: Use the exec form of the RUN command (kube-event-pipe will run as the sole process)
+
+  - Use dockerignore and COPY in a smarter way to benefit from layer caching.
+
+  - Dockerfile: include LICENCE and README
+
 - v0.2.1
+
   - Bug fix for pipe output
+
 - v0.2.0
+
   - Output file parameter
+
   - Use '{event_obj.metadata.name}-{event_obj.count}' as event identity
+
   - Reopen the output file on SIGHUP (support for external log rotation)
+
   - Bugfix - don't use logging in signal handlers
+
 - v0.1.0
+
   - Log watching and deduplication
+
   - Bloom filter rotation
+
   - Stdout output
