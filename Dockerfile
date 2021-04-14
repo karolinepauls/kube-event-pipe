@@ -19,4 +19,4 @@ RUN mkdir /var/filters && chown user /var/filters
 ENV KUBE_EVENT_PIPE_PERSISTENCE_PATH=/var/filters
 
 USER user
-CMD kube-event-pipe
+CMD [ "kube-event-pipe" ]
